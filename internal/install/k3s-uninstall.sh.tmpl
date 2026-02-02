@@ -1,0 +1,102 @@
+#!/bin/sh
+set -x
+
+# ---------- 0. Root check ----------
+if [ "$(id -u)" -ne 0 ]; then
+  echo "[ERROR] Please run as root"
+  exit 1
+fi
+UNIT=k3s{{if .IsAgent}}-agent{{end}}
+
+
+systemctl stop ${UNIT}
+systemctl disable ${UNIT}
+systemctl daemon-reload
+
+rm -f /etc/systemd/system/${UNIT}.service
+rm -f /usr/local/bin/k3s
+
+if [ -L /usr/local/bin/kubectl ]; then
+    rm -f /usr/local/bin/kubectl
+fi
+
+if [ -L /usr/local/bin/crictl ]; then
+    rm -f /usr/local/bin/crictl
+fi
+mount | grep /var/lib/kubelet | awk '{print $3}' | xargs -r umount -l
+
+
+# ---------- 1. Stop services ----------
+echo "[1/9] Stopping k3s / containerd services..."
+systemctl stop k3s k3s-agent containerd 2>/dev/null || true
+systemctl disable k3s k3s-agent 2>/dev/null || true
+
+# ---------- 2. Kill leftover processes ----------
+echo "[2/9] Killing leftover processes..."
+# ---------- 3. Unmount kubelet volume mounts ----------
+echo "[3/9] Unmounting kubelet mounts..."
+mount | awk '$3 ~ "^/var/lib/kubelet" {print $3}' | xargs -r umount -l || true
+
+# ---------- 4. Unmount & remove CNI network namespaces (nsfs) ----------
+echo "[4/9] Unmounting CNI network namespaces (nsfs)..."
+mount | awk '$5=="nsfs" && $3 ~ "^/run/netns/" {print $3}' | \
+  xargs -r umount -l || true
+
+rm -rf /run/netns/cni-* || true
+
+# ---------- 5. Remove orphan veth interfaces ----------
+echo "[5/9] Removing orphan veth interfaces..."
+for v in $(ip -o link show | awk -F': ' '/veth/{print $2}'); do
+  ip link show "$v" | grep -q master || ip link delete "$v"
+done 2>/dev/null || true
+
+# ---------- 6. Remove CNI bridges ----------
+echo "[6/9] Removing CNI bridges..."
+ip link delete cni0 2>/dev/null || true
+ip link delete flannel.1 2>/dev/null || true
+ip link delete flannel-v6.1 2>/dev/null || true
+
+# ---------- 7. Flush iptables (k8s leftovers only) ----------
+echo "[7/9] Flushing iptables..."
+iptables -t nat -F || true
+iptables -F || true
+
+# ---------- 8. Remove files & directories ----------
+echo "[8/9] Removing k3s / kubelet / CNI files..."
+rm -rf \
+  /etc/rancher/k3s \
+  /var/lib/rancher/k3s \
+  /var/lib/kubelet \
+  /var/lib/cni \
+  /etc/cni \
+  /run/k3s \
+  /run/flannel \
+  /var/lib/containerd \
+  /usr/local/bin/k3s \
+  /usr/bin/k3s \
+  /etc/systemd/system/k3s.service \
+  /etc/systemd/system/k3s-agent.service \
+  /etc/systemd/system/k3s*.env \
+  /var/log/pods \
+  /var/log/containers \
+  /var/log/k3s* \
+  /var/lib/etcd 2>/dev/null || true
+
+rm -rf {{.DataDir}}/agent
+rm -rf {{.DataDir}}/data
+rm -rf {{.DataDir}}/server
+rm -rf /etc/rancher/k3s
+rm -rf /var/lib/ranker/k3s
+
+rm -f /usr/local/bin/k3s-uninstall.sh
+rm -rf /var/lib/kubelet
+rm -rf /var/lib/cni /etc/cni
+rm -rf /var/log/pods/
+
+
+# ---------- 9. Reload systemd ----------
+echo "[9/9] Reloading systemd..."
+systemctl daemon-reload
+
+echo " ✅ k3s fully uninstalled"
+

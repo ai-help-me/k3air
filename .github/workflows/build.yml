@@ -1,0 +1,181 @@
+name: Build and Release with K3s
+
+on:
+  workflow_dispatch:
+    inputs:
+      k3s_version:
+        description: 'K3s version (leave empty for latest stable)'
+        required: false
+        default: ''
+      release_tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        default: 'latest'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  K3S_GITHUB_REPO: "k3s-io/k3s"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get K3s Version
+        id: get_k3s_version
+        run: |
+          if [ -n "${{ github.event.inputs.k3s_version }}" ]; then
+            K3S_VERSION="${{ github.event.inputs.k3s_version }}"
+          else
+            # Get latest stable k3s version
+            K3S_VERSION=$(gh release list --repo ${{ env.K3S_GITHUB_REPO }} --limit 1 | grep -oP 'v\d+\.\d+\.\d+\+k3s\d+' || true)
+            if [ -z "$K3S_VERSION" ]; then
+              echo "Failed to get latest k3s version"
+              exit 1
+            fi
+          fi
+          echo "version=$K3S_VERSION" >> $GITHUB_OUTPUT
+          echo "K3s version: $K3S_VERSION"
+
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Download K3s Assets (AMD64)
+        env:
+          K3S_VERSION: ${{ steps.get_k3s_version.outputs.version }}
+        run: |
+          echo "Downloading K3s assets for AMD64: $K3S_VERSION"
+          mkdir -p assets-amd64
+
+          # Download k3s binary (amd64)
+          curl -sfL https://github.com/${{ env.K3S_GITHUB_REPO }}/releases/download/${K3S_VERSION}/k3s \
+            -o assets-amd64/k3s
+          chmod +x assets-amd64/k3s
+
+          # Download k3s-airgap-images-amd64.tar.gz
+          curl -sfL https://github.com/${{ env.K3S_GITHUB_REPO }}/releases/download/${K3S_VERSION}/k3s-airgap-images-amd64.tar.gz \
+            -o assets-amd64/k3s-airgap-images-amd64.tar.gz
+
+          # Download k3s-uninstall.sh
+          curl -sfL https://github.com/${{ env.K3S_GITHUB_REPO }}/releases/download/${K3S_VERSION}/k3s-uninstall.sh \
+            -o assets-amd64/k3s-uninstall.sh
+          chmod +x assets-amd64/k3s-uninstall.sh
+
+          ls -lh assets-amd64/
+
+      - name: Download K3s Assets (ARM64)
+        env:
+          K3S_VERSION: ${{ steps.get_k3s_version.outputs.version }}
+        run: |
+          echo "Downloading K3s assets for ARM64: $K3S_VERSION"
+          mkdir -p assets-arm64
+
+          # Download k3s binary (arm64)
+          curl -sfL https://github.com/${{ env.K3S_GITHUB_REPO }}/releases/download/${K3S_VERSION}/k3s-arm64 \
+            -o assets-arm64/k3s
+          chmod +x assets-arm64/k3s
+
+          # Download k3s-airgap-images-arm64.tar.gz
+          curl -sfL https://github.com/${{ env.K3S_GITHUB_REPO }}/releases/download/${K3S_VERSION}/k3s-airgap-images-arm64.tar.gz \
+            -o assets-arm64/k3s-airgap-images-arm64.tar.gz
+
+          # Download k3s-uninstall.sh
+          curl -sfL https://github.com/${{ env.K3S_GITHUB_REPO }}/releases/download/${K3S_VERSION}/k3s-uninstall.sh \
+            -o assets-arm64/k3s-uninstall.sh
+          chmod +x assets-arm64/k3s-uninstall.sh
+
+          ls -lh assets-arm64/
+
+      - name: Build k3air (linux-amd64)
+        env:
+          CGO_ENABLED: 0
+          GOARCH: amd64
+        run: |
+          go build -ldflags="-s -w" -o k3air-linux-amd64 .
+          ls -lh k3air-linux-amd64
+
+      - name: Build k3air (linux-arm64)
+        env:
+          CGO_ENABLED: 0
+          GOARCH: arm64
+        run: |
+          go build -ldflags="-s -w" -o k3air-linux-arm64 .
+          ls -lh k3air-linux-arm64
+
+      - name: Create Release Directory
+        run: mkdir -p release
+
+      - name: Package AMD64 Bundle
+        run: |
+          tar -czf release/k3air-linux-amd64.tar.gz \
+            -C assets-amd64 \
+            k3s \
+            k3s-airgap-images-amd64.tar.gz \
+            k3s-uninstall.sh \
+            ../k3air-linux-amd64
+
+      - name: Package ARM64 Bundle
+        run: |
+          tar -czf release/k3air-linux-arm64.tar.gz \
+            -C assets-arm64 \
+            k3s \
+            k3s-airgap-images-arm64.tar.gz \
+            k3s-uninstall.sh \
+            ../k3air-linux-arm64
+
+      - name: Create Checksums
+        working-directory: release
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Determine Release Tag
+        id: get_tag
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG=${GITHUB_REF#refs/tags/}
+          else
+            TAG=${{ github.event.inputs.release_tag }}
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: "k3air ${{ steps.get_tag.outputs.tag }} with K3s ${{ steps.get_k3s_version.outputs.version }}"
+          body: |
+            ## k3air ${{ steps.get_tag.outputs.tag }}
+
+            **K3s version:** ${{ steps.get_k3s_version.outputs.version }}
+
+            ### Downloads
+
+            | File | Description |
+            |------|-------------|
+            | `k3air-linux-amd64.tar.gz` | Complete bundle for AMD64 (k3air + k3s + airgap images) |
+            | `k3air-linux-arm64.tar.gz` | Complete bundle for ARM64 (k3air + k3s + airgap images) |
+
+            ### Verify Checksums
+
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+          files: |
+            release/*.tar.gz
+            release/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

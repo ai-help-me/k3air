@@ -13,6 +13,7 @@ import (
 
 	"k3air/internal/config"
 	"k3air/internal/install"
+	"k3air/internal/version"
 )
 
 // timeFormat is the global time format for logs
@@ -76,6 +77,25 @@ func (h *textHandler) WithGroup(name string) slog.Handler {
 }
 
 func main() {
+	// Global flags
+	showVersion := flag.Bool("version", false, "show version information")
+	showVersionShort := flag.Bool("v", false, "show version information (short)")
+
+	// Parse global flags
+	flag.Parse()
+
+	// Handle version flag
+	if *showVersion || *showVersionShort {
+		printVersion()
+		os.Exit(0)
+	}
+
+	// Check if a command is provided
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
+	}
+
 	apply := flag.NewFlagSet("apply", flag.ExitOnError)
 	cfgPath := apply.String("f", "init.yaml", "path to config.yaml")
 	verbose := apply.Bool("verbose", false, "enable verbose logging")
@@ -150,4 +170,11 @@ func printUsage() {
 	fmt.Println("usage:")
 	fmt.Println("  k3air apply -f <config path>   Deploy a k3s cluster")
 	fmt.Println("  k3air init                     Create a default config.yaml")
+	fmt.Println("  k3air --version, -v            Show version information")
+}
+
+func printVersion() {
+	fmt.Printf("k3air %s\n", version.Version)
+	fmt.Printf("  Build time: %s\n", version.BuildTime)
+	fmt.Printf("  Git commit: %s\n", version.GitCommit)
 }

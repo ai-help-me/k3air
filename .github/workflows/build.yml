@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       k3s_version:
-        description: 'K3s version (e.g., v1.31.4+k3s1)'
+        description: 'K3s version (e.g., v1.35.0+k3s1)'
         required: false
         default: 'v1.35.0+k3s1'  # ✅ 固定默认版本（请确保该版本存在）
       release_tag:

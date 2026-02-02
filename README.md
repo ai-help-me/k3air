@@ -9,7 +9,7 @@ k3air init
 2. 编辑配置文件
 3. 开始部署
 ```bash
-# 1min15s 拉起一套三节点 k3s 集群
+# 1m15s 内拉起一套三节点 k3s 集群
 k3air apply -f init.yaml
 ```
 [![asciicast](https://asciinema.org/a/UPheMWJ2lBPFfrrx.svg)](https://asciinema.org/a/UPheMWJ2lBPFfrrx)

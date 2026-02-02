@@ -4,13 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       k3s_version:
-        description: 'K3s version (e.g., v1.29.5+k3s1) or "latest" for auto-detection'
+        description: 'K3s version (e.g., v1.31.4+k3s1)'
         required: false
-        default: 'latest'  # ✅ 合理默认值：字符串 "latest" 表示自动获取
+        default: 'v1.31.4+k3s1'  # ✅ 固定默认版本（请确保该版本存在）
       release_tag:
-        description: 'Release tag (e.g., v1.0.0) - MUST be a valid tag name'
+        description: 'Release tag (e.g., v1.0.0)'
         required: true
-        # ❌ 移除 default: 'latest'（"latest" 不是合法 tag）
   push:
     tags:
       - 'v*'
@@ -20,7 +19,8 @@ permissions:
 
 env:
   K3S_GITHUB_REPO: "k3s-io/k3s"
-  K3S_API_URL: "https://update.k3s.io/v1-release/channels/stable"
+  # 默认 K3s 版本（用于 push.tags 事件，此时无 inputs）
+  DEFAULT_K3S_VERSION: "v1.31.4+k3s1"
 
 jobs:
   build:
@@ -29,30 +29,20 @@ jobs:
       - name: Determine K3s Version
         id: get_k3s_version
         run: |
+          # 优先使用 workflow_dispatch 输入，否则用环境变量默认值
           INPUT_VERSION="${{ github.event.inputs.k3s_version }}"
-          echo "Input k3s_version: '${INPUT_VERSION}'"
           
-          # 判断是否需要自动获取最新版
-          if [ -z "$INPUT_VERSION" ] || [ "$INPUT_VERSION" = "latest" ]; then
-            echo "Auto-detecting latest stable K3s version..."
-            # ✅ 使用官方 API（无需 token，比 gh CLI 更可靠）
-            LATEST=$(curl -fsSL "${K3S_API_URL}" | jq -r .latest 2>/dev/null || true)
-            
-            if [ -z "$LATEST" ] || [ "$LATEST" = "null" ]; then
-              echo "❌ Failed to fetch latest K3s version from ${K3S_API_URL}"
-              exit 1
-            fi
-            
-            K3S_VERSION="$LATEST"
-            echo "Detected latest version: $K3S_VERSION"
-          else
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$INPUT_VERSION" ]; then
             K3S_VERSION="$INPUT_VERSION"
-            echo "Using specified version: $K3S_VERSION"
+            echo "Using K3s version from input: $K3S_VERSION"
+          else
+            K3S_VERSION="${DEFAULT_K3S_VERSION}"
+            echo "Using default K3s version: $K3S_VERSION"
           fi
           
           # 验证版本格式（基本检查）
           if ! echo "$K3S_VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(\+k3s[0-9]+)?$'; then
-            echo "⚠️ Warning: Version '$K3S_VERSION' does not match expected format (e.g., v1.29.5+k3s1)"
+            echo "⚠️ Warning: Version '$K3S_VERSION' does not match expected format (e.g., v1.31.4+k3s1)"
             echo "Proceeding anyway..."
           fi
           
@@ -75,7 +65,6 @@ jobs:
           echo "Downloading K3s assets for AMD64: $K3S_VERSION"
           mkdir -p assets-amd64
           
-          # ✅ 修复 URL 拼接：移除多余空格
           BASE_URL="https://github.com/${K3S_GITHUB_REPO}/releases/download/${K3S_VERSION}"
           
           # Download k3s binary (amd64)
@@ -85,7 +74,7 @@ jobs:
           # Download airgap images
           curl -fSL "${BASE_URL}/k3s-airgap-images-amd64.tar.gz" -o assets-amd64/k3s-airgap-images-amd64.tar.gz || { echo "❌ Failed to download airgap images"; exit 1; }
           
-          # Download uninstall script (shared across architectures)
+          # Download uninstall script
           curl -fSL "${BASE_URL}/k3s-uninstall.sh" -o assets-amd64/k3s-uninstall.sh || { echo "❌ Failed to download uninstall script"; exit 1; }
           chmod +x assets-amd64/k3s-uninstall.sh
           
@@ -100,13 +89,13 @@ jobs:
           
           BASE_URL="https://github.com/${K3S_GITHUB_REPO}/releases/download/${K3S_VERSION}"
           
-          # Download k3s binary (arm64) - note: some versions use 'k3s-arm64', others use 'k3s'
+          # Try k3s-arm64 first, fall back to generic k3s
           if curl -fSL "${BASE_URL}/k3s-arm64" -o assets-arm64/k3s 2>/dev/null; then
             echo "Downloaded k3s-arm64 binary"
           elif curl -fSL "${BASE_URL}/k3s" -o assets-arm64/k3s 2>/dev/null; then
             echo "Downloaded generic k3s binary (ARM64 compatible)"
           else
-            echo "❌ Failed to download ARM64 k3s binary (tried both 'k3s-arm64' and 'k3s')"
+            echo "❌ Failed to download ARM64 k3s binary"
             exit 1
           fi
           chmod +x assets-arm64/k3s
@@ -114,7 +103,7 @@ jobs:
           # Download airgap images
           curl -fSL "${BASE_URL}/k3s-airgap-images-arm64.tar.gz" -o assets-arm64/k3s-airgap-images-arm64.tar.gz || { echo "❌ Failed to download ARM64 airgap images"; exit 1; }
           
-          # Reuse uninstall script from AMD64 (same file)
+          # Reuse uninstall script
           cp assets-amd64/k3s-uninstall.sh assets-arm64/k3s-uninstall.sh
           
           ls -lh assets-arm64/
@@ -170,14 +159,12 @@ jobs:
         id: get_tag
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
-            # 从 tag 事件获取 (e.g., refs/tags/v1.2.3 → v1.2.3)
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            # 从 workflow_dispatch 输入获取
             TAG="${{ github.event.inputs.release_tag }}"
           fi
           
-          # 验证 tag 格式
+          # Validate tag format
           if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
             echo "❌ Invalid release tag: '$TAG' (expected format: v1.2.3 or v1.2.3-beta)"
             exit 1

@@ -74,10 +74,6 @@ jobs:
           # Download airgap images
           curl -fSL "${BASE_URL}/k3s-airgap-images-amd64.tar.gz" -o assets-amd64/k3s-airgap-images-amd64.tar.gz || { echo "❌ Failed to download airgap images"; exit 1; }
           
-          # Download uninstall script
-          curl -fSL "${BASE_URL}/k3s-uninstall.sh" -o assets-amd64/k3s-uninstall.sh || { echo "❌ Failed to download uninstall script"; exit 1; }
-          chmod +x assets-amd64/k3s-uninstall.sh
-          
           ls -lh assets-amd64/
 
       - name: Download K3s Assets (ARM64)
@@ -102,9 +98,6 @@ jobs:
           
           # Download airgap images
           curl -fSL "${BASE_URL}/k3s-airgap-images-arm64.tar.gz" -o assets-arm64/k3s-airgap-images-arm64.tar.gz || { echo "❌ Failed to download ARM64 airgap images"; exit 1; }
-          
-          # Reuse uninstall script
-          cp assets-amd64/k3s-uninstall.sh assets-arm64/k3s-uninstall.sh
           
           ls -lh assets-arm64/
 
@@ -135,7 +128,6 @@ jobs:
             -C assets-amd64 \
             k3s \
             k3s-airgap-images-amd64.tar.gz \
-            k3s-uninstall.sh \
             ../k3air-linux-amd64
           ls -lh release/k3air-linux-amd64.tar.gz
 
@@ -145,7 +137,6 @@ jobs:
             -C assets-arm64 \
             k3s \
             k3s-airgap-images-arm64.tar.gz \
-            k3s-uninstall.sh \
             ../k3air-linux-arm64
           ls -lh release/k3air-linux-arm64.tar.gz
 

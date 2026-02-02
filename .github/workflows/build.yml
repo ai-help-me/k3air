@@ -6,7 +6,7 @@ on:
       k3s_version:
         description: 'K3s version (leave empty for latest stable)'
         required: false
-        default: ''
+        default: 'v1.35.0+k3s1'
       release_tag:
         description: 'Release tag (e.g., v1.0.0)'
         required: true

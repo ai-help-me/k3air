@@ -6,7 +6,7 @@ on:
       k3s_version:
         description: 'K3s version (e.g., v1.31.4+k3s1)'
         required: false
-        default: 'v1.31.4+k3s1'  # ✅ 固定默认版本（请确保该版本存在）
+        default: 'v1.35.0+k3s1'  # ✅ 固定默认版本（请确保该版本存在）
       release_tag:
         description: 'Release tag (e.g., v1.0.0)'
         required: true
@@ -101,13 +101,38 @@ jobs:
           
           ls -lh assets-arm64/
 
+      - name: Determine k3air Version
+        id: k3air_version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # Use tag from git ref (e.g., refs/tags/v1.0.0 -> v1.0.0)
+            K3AIR_VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            # Use release_tag input from workflow_dispatch
+            K3AIR_VERSION="${{ github.event.inputs.release_tag }}"
+          fi
+
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          GIT_COMMIT="${{ github.sha }}"
+
+          echo "version=$K3AIR_VERSION" >> $GITHUB_OUTPUT
+          echo "build_date=$BUILD_DATE" >> $GITHUB_OUTPUT
+          echo "git_commit=$GIT_COMMIT" >> $GITHUB_OUTPUT
+          echo "K3AIR_VERSION=$K3AIR_VERSION" >> $GITHUB_ENV
+          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
+          echo "GIT_COMMIT=$GIT_COMMIT" >> $GITHUB_ENV
+
       - name: Build k3air (linux-amd64)
         env:
           CGO_ENABLED: 0
           GOOS: linux
           GOARCH: amd64
         run: |
-          go build -ldflags="-s -w" -o k3air-linux-amd64 .
+          go build -ldflags="-s -w \
+            -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
+            -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
+            -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
+            -o k3air-linux-amd64 .
           ls -lh k3air-linux-amd64
 
       - name: Build k3air (linux-arm64)
@@ -116,7 +141,11 @@ jobs:
           GOOS: linux
           GOARCH: arm64
         run: |
-          go build -ldflags="-s -w" -o k3air-linux-arm64 .
+          go build -ldflags="-s -w \
+            -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
+            -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
+            -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
+            -o k3air-linux-arm64 .
           ls -lh k3air-linux-arm64
 
       - name: Create Release Directory

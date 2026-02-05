@@ -63,43 +63,43 @@ jobs:
           K3S_VERSION: ${{ steps.get_k3s_version.outputs.version }}
         run: |
           echo "Downloading K3s assets for AMD64: $K3S_VERSION"
-          mkdir -p assets-amd64
-          
+          mkdir -p k3air-amd64
+
           BASE_URL="https://github.com/${K3S_GITHUB_REPO}/releases/download/${K3S_VERSION}"
-          
+
           # Download k3s binary (amd64)
-          curl -fSL "${BASE_URL}/k3s" -o assets-amd64/k3s || { echo "❌ Failed to download k3s binary"; exit 1; }
-          chmod +x assets-amd64/k3s
-          
+          curl -fSL "${BASE_URL}/k3s" -o k3air-amd64/k3s || { echo "❌ Failed to download k3s binary"; exit 1; }
+          chmod +x k3air-amd64/k3s
+
           # Download airgap images
-          curl -fSL "${BASE_URL}/k3s-airgap-images-amd64.tar.gz" -o assets-amd64/k3s-airgap-images-amd64.tar.gz || { echo "❌ Failed to download airgap images"; exit 1; }
-          
-          ls -lh assets-amd64/
+          curl -fSL "${BASE_URL}/k3s-airgap-images-amd64.tar.gz" -o k3air-amd64/k3s-airgap-images-amd64.tar.gz || { echo "❌ Failed to download airgap images"; exit 1; }
+
+          ls -lh k3air-amd64/
 
       - name: Download K3s Assets (ARM64)
         env:
           K3S_VERSION: ${{ steps.get_k3s_version.outputs.version }}
         run: |
           echo "Downloading K3s assets for ARM64: $K3S_VERSION"
-          mkdir -p assets-arm64
-          
+          mkdir -p k3air-arm64
+
           BASE_URL="https://github.com/${K3S_GITHUB_REPO}/releases/download/${K3S_VERSION}"
-          
+
           # Try k3s-arm64 first, fall back to generic k3s
-          if curl -fSL "${BASE_URL}/k3s-arm64" -o assets-arm64/k3s 2>/dev/null; then
+          if curl -fSL "${BASE_URL}/k3s-arm64" -o k3air-arm64/k3s 2>/dev/null; then
             echo "Downloaded k3s-arm64 binary"
-          elif curl -fSL "${BASE_URL}/k3s" -o assets-arm64/k3s 2>/dev/null; then
+          elif curl -fSL "${BASE_URL}/k3s" -o k3air-arm64/k3s 2>/dev/null; then
             echo "Downloaded generic k3s binary (ARM64 compatible)"
           else
             echo "❌ Failed to download ARM64 k3s binary"
             exit 1
           fi
-          chmod +x assets-arm64/k3s
-          
+          chmod +x k3air-arm64/k3s
+
           # Download airgap images
-          curl -fSL "${BASE_URL}/k3s-airgap-images-arm64.tar.gz" -o assets-arm64/k3s-airgap-images-arm64.tar.gz || { echo "❌ Failed to download ARM64 airgap images"; exit 1; }
-          
-          ls -lh assets-arm64/
+          curl -fSL "${BASE_URL}/k3s-airgap-images-arm64.tar.gz" -o k3air-arm64/k3s-airgap-images-arm64.tar.gz || { echo "❌ Failed to download ARM64 airgap images"; exit 1; }
+
+          ls -lh k3air-arm64/
 
       - name: Determine k3air Version
         id: k3air_version
@@ -132,7 +132,7 @@ jobs:
             -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
             -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
             -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
-            -o k3air-amd64 .
+            -o k3air-amd64/k3air .
 
       - name: Build k3air (linux-arm64)
         env:
@@ -144,26 +144,18 @@ jobs:
             -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
             -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
             -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
-            -o k3air-arm64 .
+            -o k3air-arm64/k3air .
 
       - name: Create Release Directory
         run: mkdir -p release
 
       - name: Package AMD64 Bundle
         run: |
-          mkdir -p k3air-amd64
-          cp k3air-amd64 k3air-amd64/k3air
-          cp assets-amd64/k3s k3air-amd64/
-          cp assets-amd64/k3s-airgap-images-amd64.tar.gz k3air-amd64/
           tar -czf release/k3air-linux-amd64.tar.gz k3air-amd64/
           ls -lh release/k3air-linux-amd64.tar.gz
 
       - name: Package ARM64 Bundle
         run: |
-          mkdir -p k3air-arm64
-          cp k3air-arm64 k3air-arm64/k3air
-          cp assets-arm64/k3s k3air-arm64/
-          cp assets-arm64/k3s-airgap-images-arm64.tar.gz k3air-arm64/
           tar -czf release/k3air-linux-arm64.tar.gz k3air-arm64/
           ls -lh release/k3air-linux-arm64.tar.gz
 

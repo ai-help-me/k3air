@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       k3s_version:
-        description: 'K3s version (e.g., v1.31.4+k3s1)'
+        description: 'K3s version (e.g., v1.35.0+k3s1)'
         required: false
         default: 'v1.35.0+k3s1'  # ✅ 固定默认版本（请确保该版本存在）
       release_tag:
@@ -132,8 +132,7 @@ jobs:
             -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
             -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
             -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
-            -o k3air-linux-amd64 .
-          ls -lh k3air-linux-amd64
+            -o k3air .
 
       - name: Build k3air (linux-arm64)
         env:
@@ -145,8 +144,7 @@ jobs:
             -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
             -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
             -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
-            -o k3air-linux-arm64 .
-          ls -lh k3air-linux-arm64
+            -o k3air .
 
       - name: Create Release Directory
         run: mkdir -p release
@@ -157,7 +155,7 @@ jobs:
             -C assets-amd64 \
             k3s \
             k3s-airgap-images-amd64.tar.gz \
-            ../k3air-linux-amd64
+            ../k3air
           ls -lh release/k3air-linux-amd64.tar.gz
 
       - name: Package ARM64 Bundle
@@ -166,7 +164,7 @@ jobs:
             -C assets-arm64 \
             k3s \
             k3s-airgap-images-arm64.tar.gz \
-            ../k3air-linux-arm64
+            ../k3air
           ls -lh release/k3air-linux-arm64.tar.gz
 
       - name: Create Checksums

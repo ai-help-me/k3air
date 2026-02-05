@@ -69,6 +69,17 @@ func Load(path string) (Config, error) {
 	if c.Assets.K3sAirgapTarball == "" {
 		c.Assets.K3sAirgapTarball = "k3s-airgap-images-amd64.tar.gz"
 	}
+	// Set default port to 22 if not specified
+	for i := range c.Servers {
+		if c.Servers[i].Port == 0 {
+			c.Servers[i].Port = 22
+		}
+	}
+	for i := range c.Agents {
+		if c.Agents[i].Port == 0 {
+			c.Agents[i].Port = 22
+		}
+	}
 	if err := c.Validate(); err != nil {
 		return c, fmt.Errorf("config validation failed: %w", err)
 	}

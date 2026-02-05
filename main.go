@@ -140,15 +140,13 @@ func main() {
 		fmt.Println("apply completed")
 	case "init":
 		init.Parse(os.Args[2:])
-		// Get the template file path from internal/config
-		templatePath := filepath.Join("internal", "config", "init.yaml.template")
 		out := filepath.Join(".", "init.yaml")
 		if _, err := os.Stat(out); err == nil {
 			fmt.Println("init.yaml already exists")
 			os.Exit(1)
 		}
-		// Read template
-		content, err := os.ReadFile(templatePath)
+		// Read embedded template
+		content, err := config.GetTemplate()
 		if err != nil {
 			fmt.Println("failed to read template:", err)
 			os.Exit(1)

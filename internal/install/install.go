@@ -10,6 +10,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/fatih/color"
 	"k3air/internal/config"
 	"k3air/internal/sshclient"
 
@@ -17,13 +18,21 @@ import (
 )
 
 const (
-	colorGreen = "\033[32m"
-	colorReset = "\033[0m"
+	// Service health check configuration
+	serviceStartupWait    = 2 * time.Second  // Initial wait after restart
+	healthCheckInterval   = 5 * time.Second  // Interval between health checks
+	healthCheckMaxRetries = 24               // Max retries = 2 minutes / 5 seconds
+
+	// Retry configuration for SSH operations
+	maxRetries      = 3                 // Maximum number of retry attempts
+	initialDelay    = 1 * time.Second   // Initial delay before first retry
+	maxDelay        = 10 * time.Second  // Maximum delay between retries
 )
 
-func green(s string) string {
-	return colorGreen + s + colorReset
-}
+// Color output helpers
+var (
+	green = color.New(color.FgGreen).SprintFunc()
+)
 
 type Installer struct {
 	cfg              config.Config
@@ -138,8 +147,13 @@ func (i *Installer) installServer(node config.Node, primaryIP string, isPrimary 
 		return err
 	}
 
-	slog.Debug("waiting for service to start...", "seconds", 2)
-	time.Sleep(2 * time.Second)
+	slog.Debug("waiting for service to start...")
+	time.Sleep(serviceStartupWait)
+
+	// Wait for service to be healthy
+	if err := i.waitForServiceReady(c, "k3s"); err != nil {
+		return fmt.Errorf("service health check failed: %w", err)
+	}
 
 	slog.Debug("creating kubectl symlink")
 	if err := runCmd(c, "cp /usr/local/bin/k3s /usr/local/bin/kubectl -f"); err != nil {
@@ -205,8 +219,13 @@ func (i *Installer) installAgent(node config.Node, primaryIP string) error {
 		return err
 	}
 
-	slog.Debug("waiting for service to start...", "seconds", 2)
-	time.Sleep(2 * time.Second)
+	slog.Debug("waiting for agent service to start...")
+	time.Sleep(serviceStartupWait)
+
+	// Wait for agent service to be healthy
+	if err := i.waitForServiceReady(c, "k3s-agent"); err != nil {
+		return fmt.Errorf("agent service health check failed: %w", err)
+	}
 
 	return nil
 }
@@ -215,22 +234,39 @@ func (i *Installer) prepareNode(c *sshclient.Client) error {
 	slog.Info("preparing node environment", "node", c.Addr())
 
 	slog.Debug("creating directory", "path", "/usr/local/bin")
-	if err := runCmd(c, "mkdir -p /usr/local/bin"); err != nil {
-		return err
+	if err := c.MkdirAll("/usr/local/bin"); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	imagesDir := filepath.Join(i.cfg.Cluster.DataDir, "agent", "images")
 	slog.Debug("creating directory", "path", imagesDir)
-	if err := runCmd(c, fmt.Sprintf("mkdir -p %s", imagesDir)); err != nil {
-		return err
+	if err := c.MkdirAll(imagesDir); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	slog.Debug("creating directory", "path", "/etc/rancher/k3s")
-	if err := runCmd(c, "mkdir -p /etc/rancher/k3s"); err != nil {
-		return err
+	if err := c.MkdirAll("/etc/rancher/k3s"); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	return nil
+}
+
+// waitForServiceReady waits for the k3s service to be healthy
+func (i *Installer) waitForServiceReady(c *sshclient.Client, serviceName string) error {
+	slog.Info("waiting for service to be ready", "service", serviceName)
+	for i := 0; i < healthCheckMaxRetries; i++ {
+		// Check if service is active via systemctl
+		stdout, stderr, err := c.Run(fmt.Sprintf("systemctl is-active %s", serviceName))
+		if err == nil && strings.TrimSpace(stdout) == "active" {
+			// Service is active, also check if it's not failed
+			slog.Info("service is ready", "service", serviceName)
+			return nil
+		}
+		slog.Debug("service not ready yet", "service", serviceName, "status", stdout, "stderr", stderr, "retry", i+1)
+		time.Sleep(healthCheckInterval)
+	}
+	return fmt.Errorf("service %s did not become ready after %v", serviceName, time.Duration(healthCheckMaxRetries)*healthCheckInterval)
 }
 
 func (i *Installer) uploadAssets(c *sshclient.Client) error {
@@ -242,11 +278,17 @@ func (i *Installer) uploadAssets(c *sshclient.Client) error {
 		return err
 	}
 
-	if fi, err := os.Stat(k3sPath); err == nil {
-		slog.Info("uploading k3s binary", "size", formatBytes(fi.Size()), "node", c.Addr())
+	k3sInfo, err := os.Stat(k3sPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat k3s binary: %w", err)
 	}
+	slog.Info("uploading k3s binary", "size", formatBytes(k3sInfo.Size()), "node", c.Addr())
 	if err := c.Upload(k3sPath, "/usr/local/bin/k3s", true); err != nil {
 		return err
+	}
+	// Verify upload
+	if err := i.verifyUpload(c, "/usr/local/bin/k3s", k3sInfo.Size()); err != nil {
+		return fmt.Errorf("k3s binary upload verification failed: %w", err)
 	}
 
 	slog.Debug("setting permissions", "path", "/usr/local/bin/k3s", "mode", "755")
@@ -261,12 +303,18 @@ func (i *Installer) uploadAssets(c *sshclient.Client) error {
 			// Only warn if images tarball is configured but not found
 			slog.Warn("skipping images archive", "reason", err)
 		} else {
-			tarballPath := filepath.Join(i.cfg.Cluster.DataDir, "agent", "images", "k3s-airgap-images-amd64.tar.gz")
-			if fi, err := os.Stat(imgPath); err == nil {
-				slog.Info("uploading airgap images archive", "size", formatBytes(fi.Size()))
+			imgInfo, err := os.Stat(imgPath)
+			if err != nil {
+				return fmt.Errorf("failed to stat images archive: %w", err)
 			}
+			tarballPath := filepath.Join(i.cfg.Cluster.DataDir, "agent", "images", "k3s-airgap-images-amd64.tar.gz")
+			slog.Info("uploading airgap images archive", "size", formatBytes(imgInfo.Size()))
 			if err := c.Upload(imgPath, tarballPath, true); err != nil {
 				return err
+			}
+			// Verify upload
+			if err := i.verifyUpload(c, tarballPath, imgInfo.Size()); err != nil {
+				return fmt.Errorf("images archive upload verification failed: %w", err)
 			}
 		}
 	} else {
@@ -281,6 +329,21 @@ func (i *Installer) uploadAssets(c *sshclient.Client) error {
 	}
 
 	return nil
+}
+
+// verifyUpload verifies that the uploaded file has the expected size
+func (i *Installer) verifyUpload(c *sshclient.Client, remotePath string, expectedSize int64) error {
+	return retryWithBackoff("verify upload: "+remotePath, func() error {
+		remoteSize, err := c.GetFileSize(remotePath)
+		if err != nil {
+			return fmt.Errorf("failed to get remote file size: %w", err)
+		}
+		if remoteSize != expectedSize {
+			return fmt.Errorf("size mismatch: local=%d bytes, remote=%d bytes", expectedSize, remoteSize)
+		}
+		slog.Debug("upload verified", "path", remotePath, "size", formatBytes(remoteSize))
+		return nil
+	})
 }
 
 func formatBytes(b int64) string {
@@ -419,6 +482,35 @@ func runCmd(c *sshclient.Client, cmd string) error {
 		return fmt.Errorf("cmd failed: %s\nstdout:\n%s\nstderr:\n%s\nerr: %v", cmd, stdout, stderr, err)
 	}
 	return nil
+}
+
+// retryWithBackoff executes a function with exponential backoff retry
+func retryWithBackoff(operation string, fn func() error) error {
+	var lastErr error
+	delay := initialDelay
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			slog.Debug("retrying operation", "operation", operation, "attempt", attempt, "delay", delay)
+			time.Sleep(delay)
+			// Exponential backoff with jitter
+			delay = time.Duration(float64(delay) * 1.5)
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+
+		err := fn()
+		if err == nil {
+			if attempt > 0 {
+				slog.Info("operation succeeded after retry", "operation", operation, "attempt", attempt)
+			}
+			return nil
+		}
+		lastErr = err
+	}
+
+	return fmt.Errorf("operation failed after %d attempts: %w", maxRetries+1, lastErr)
 }
 
 func (i *Installer) downloadKubeconfig(master config.Node) error {

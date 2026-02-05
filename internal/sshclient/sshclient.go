@@ -167,3 +167,17 @@ func (c *Client) DownloadBytes(remotePath string) ([]byte, error) {
 	defer rf.Close()
 	return io.ReadAll(rf)
 }
+
+// GetFileSize returns the size of a remote file
+func (c *Client) GetFileSize(remotePath string) (int64, error) {
+	rf, err := c.sftp.Open(remotePath)
+	if err != nil {
+		return 0, err
+	}
+	defer rf.Close()
+	fi, err := rf.Stat()
+	if err != nil {
+		return 0, err
+	}
+	return fi.Size(), nil
+}

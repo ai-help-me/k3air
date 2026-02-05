@@ -132,7 +132,7 @@ jobs:
             -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
             -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
             -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
-            -o k3air .
+            -o k3air-amd64 .
 
       - name: Build k3air (linux-arm64)
         env:
@@ -144,27 +144,27 @@ jobs:
             -X 'k3air/internal/version.Version=${{ steps.k3air_version.outputs.version }}' \
             -X 'k3air/internal/version.BuildTime=${{ steps.k3air_version.outputs.build_date }}' \
             -X 'k3air/internal/version.GitCommit=${{ steps.k3air_version.outputs.git_commit }}'" \
-            -o k3air .
+            -o k3air-arm64 .
 
       - name: Create Release Directory
         run: mkdir -p release
 
       - name: Package AMD64 Bundle
         run: |
-          tar -czf release/k3air-linux-amd64.tar.gz \
-            -C assets-amd64 \
-            k3s \
-            k3s-airgap-images-amd64.tar.gz \
-            ../k3air
+          mkdir -p k3air-amd64
+          cp k3air-amd64 k3air-amd64/k3air
+          cp assets-amd64/k3s k3air-amd64/
+          cp assets-amd64/k3s-airgap-images-amd64.tar.gz k3air-amd64/
+          tar -czf release/k3air-linux-amd64.tar.gz k3air-amd64/
           ls -lh release/k3air-linux-amd64.tar.gz
 
       - name: Package ARM64 Bundle
         run: |
-          tar -czf release/k3air-linux-arm64.tar.gz \
-            -C assets-arm64 \
-            k3s \
-            k3s-airgap-images-arm64.tar.gz \
-            ../k3air
+          mkdir -p k3air-arm64
+          cp k3air-arm64 k3air-arm64/k3air
+          cp assets-arm64/k3s k3air-arm64/
+          cp assets-arm64/k3s-airgap-images-arm64.tar.gz k3air-arm64/
+          tar -czf release/k3air-linux-arm64.tar.gz k3air-arm64/
           ls -lh release/k3air-linux-arm64.tar.gz
 
       - name: Create Checksums
